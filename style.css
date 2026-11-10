@@ -264,3 +264,9 @@ a.chip { text-decoration: none; color: inherit; }
 .script-line:last-child { border-bottom: 0; }
 .yt-frame { position: relative; padding-top: 56.25%; border-radius: 14px; overflow: hidden; background: #000; margin-bottom: 12px; }
 .yt-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
+
+/* Card cliccabili: sempre a tutta larghezza e testo a sinistra (anche se disattivate) */
+button.card { display: block; width: 100%; text-align: left; font: inherit; color: inherit; }
+button.card:disabled { cursor: default; }
+button.card:disabled > * { opacity: .45; }
+button.card:disabled:active { transform: none; }

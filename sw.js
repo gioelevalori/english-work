@@ -1,4 +1,4 @@
-const CACHE = "english-work-v4";
+﻿const CACHE = "english-work-v5";
 const FILES = ["./", "index.html", "style.css", "app.js", "data.js", "data2.js", "data3.js", "data4.js", "audio-index.js", "manifest.webmanifest", "icons/icon-192.png", "icons/icon-512.png", "icons/apple-touch-icon.png"];
 
 self.addEventListener("install", e => {

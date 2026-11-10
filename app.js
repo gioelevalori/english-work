@@ -627,6 +627,8 @@ const VIEWS = {
       <div class="grow"><b>Obiettivo giornaliero</b><div class="muted small">${pr.xp} di ${S.settings.goal} XP oggi · serie 🔥 ${currentStreak()} giorni</div></div></div></div>
       <button class="card continue block" id="cont" style="width:100%;text-align:left"><div class="row"><div class="unit-icon" style="background:rgba(255,255,255,.18)">${nx.u.icon}</div>
       <div class="grow"><div class="small muted">Continua da qui</div><b style="font-size:18px">${esc(nx.u.title)}</b><div class="small muted">${nx.l.name}</div></div><span style="font-size:26px">▶</span></div></button>
+      <button class="card" id="goScenes"><div class="row"><div class="unit-icon">🎬</div>
+      <div class="grow"><b>Scene da serie TV</b><div class="small muted">Ascolta, poi scrivi cosa hai capito · anche da YouTube</div></div><span class="muted">›</span></div></button>
       <div class="section-title">Percorso · tutte le unità sono sbloccate</div>`;
     let lastLevel = "";
     COURSE.forEach(u => {
@@ -641,6 +643,7 @@ const VIEWS = {
     v.innerHTML = html;
     if ($("#hideInst")) $("#hideInst").onclick = () => { localStorage.setItem("ew-hide-install", "1"); render(); };
     $("#cont").onclick = () => openLesson(nx.u, nx.i);
+    $("#goScenes").onclick = () => $('#tabs [data-tab="talk"]').click();
     $$("[data-tip]", v).forEach(b => b.onclick = () => showTip(COURSE.find(u => u.id === b.dataset.tip)));
     $$(".lesson-btn", v).forEach(b => b.onclick = () => openLesson(COURSE.find(u => u.id === b.dataset.u), +b.dataset.l));
   },
@@ -652,14 +655,14 @@ const VIEWS = {
     const dueU = dedupe(due);
     const nb = notebookItems();
     const cards = [
-      { id: "smart", ic: "🧠", t: "Ripasso intelligente", d: dueU.length ? `${dueU.length} elementi da ripassare adesso` : "Tutto ripassato! Ripassa comunque i più deboli", on: true },
-      { id: "flash", ic: "🃏", t: "Flashcard delle mie parole", d: `${S.notebook.length} parole nel tuo vocabolario`, on: S.notebook.length > 0 },
-      { id: "nbquiz", ic: "📒", t: "Quiz sulle mie parole", d: "Esercizi creati dal tuo vocabolario", on: nb.length >= 4 },
+      { id: "smart", ic: "🧠", t: "Ripasso intelligente", d: dueU.length ? `${dueU.length} elementi da ripassare adesso` : seen.length ? "Tutto ripassato! Ripassa comunque i più deboli" : "Fai qualche lezione: qui ripasserai ciò che studi", on: true },
+      { id: "flash", ic: "🃏", t: "Flashcard delle mie parole", d: S.notebook.length ? `${S.notebook.length} parole nel tuo vocabolario` : "Salva qualche parola per usarle", on: S.notebook.length > 0 },
+      { id: "nbquiz", ic: "📒", t: "Quiz sulle mie parole", d: nb.length >= 4 ? "Esercizi creati dal tuo vocabolario" : `Servono almeno 4 parole salvate (ne hai ${nb.length})`, on: nb.length >= 4 },
       { id: "listen", ic: "🎧", t: "Allenamento ascolto", d: "Capire l'inglese parlato", on: true },
       { id: "speak", ic: "🎤", t: "Pronuncia", d: SR ? "Leggi frasi ad alta voce" : "Non supportato da questo browser", on: !!SR },
       { id: "free", ic: "♾️", t: "Allenamento libero", d: "Esercizi misti senza fine", on: true }
     ];
-    v.innerHTML = `<div class="section-title">Ripasso</div>` + cards.map(c => `<button class="card" data-m="${c.id}" ${c.on ? "" : "disabled style='opacity:.5'"} style="width:100%;text-align:left">
+    v.innerHTML = `<div class="section-title">Ripasso</div>` + cards.map(c => `<button class="card" data-m="${c.id}" ${c.on ? "" : "disabled"}>
       <div class="row"><div class="unit-icon">${c.ic}</div><div class="grow"><b>${c.t}</b><div class="small muted">${c.d}</div></div><span class="muted">›</span></div></button>`).join("")
       + `<p class="muted small" style="text-align:center">Il ripasso usa la ripetizione dilazionata: ciò che sbagli torna presto, ciò che sai torna più avanti.</p>`;
     const base = seen.length >= 6 ? seen : ALL.filter(i => ["u1", "u2", "u3"].includes(i.unit));
