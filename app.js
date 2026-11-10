@@ -960,6 +960,10 @@ function scenesHTML() {
     <p class="muted small" style="margin:-4px 4px 10px">Ascolta la scena come se fossi davanti alla TV, poi scrivi cosa hai capito.</p>
     ${SCENES.map(s => { const l = last(s.id); return `<button class="card" data-s="${s.id}" style="width:100%;text-align:left"><div class="row"><div class="unit-icon">${s.icon}</div>
       <div class="grow"><b>${esc(s.title)}</b><div class="small muted"><span class="badge">${s.level}</span>${esc(s.genre)}${l ? ` · ultimo: ${l.score}%` : ""}</div></div><span class="muted">›</span></div></button>`; }).join("")}
+    <div class="card"><b>🎥 Scene vere di Friends, HIMYM e altre serie</b>
+      <p class="muted small" style="margin:4px 0 8px">Tocca per cercare la scena su YouTube. Poi copia il link, torna qui e incollalo in "La tua scena da YouTube": il video si apre nell'app e scrivi cosa hai capito.</p>
+      <div class="chips" style="flex-wrap:wrap">${[["Friends", "friends best scenes"], ["Friends · Pivot", "friends pivot scene"], ["Friends · We were on a break", "friends we were on a break scene"], ["Friends · Smelly Cat", "friends smelly cat scene"], ["How I Met Your Mother", "how i met your mother best scenes"], ["The Office US", "the office us best scenes"], ["Modern Family", "modern family best scenes"], ["Sherlock (UK)", "sherlock bbc best scenes"]]
+        .map(([n, q]) => `<a class="chip" target="_blank" rel="noopener" href="https://www.youtube.com/results?search_query=${encodeURIComponent(q + " english subtitles")}">🔎 ${n}</a>`).join("")}</div></div>
     <button class="card" id="ytNew" style="width:100%;text-align:left"><div class="row"><div class="unit-icon">▶️</div>
       <div class="grow"><b>La tua scena da YouTube</b><div class="small muted">Incolla il link di una scena della tua serie preferita</div></div><span class="muted">›</span></div></button>
     ${S.journal.length ? `<div class="card list-card reveal"><div class="section-title" style="margin:12px 0 4px">Il mio diario di ascolto</div>${S.journal.slice(0, 15).map(j => `
@@ -1106,7 +1110,8 @@ function openYouTube(entry) {
     if (!v) { box.innerHTML = $("#ytUrl").value.trim() ? `<p class="small" style="color:var(--bad)">Link YouTube non riconosciuto.</p>` : ""; return; }
     if (box.dataset.vid === v.id) return;
     box.dataset.vid = v.id;
-    box.innerHTML = `<div class="yt-frame"><iframe src="https://www.youtube-nocookie.com/embed/${v.id}?playsinline=1&rel=0&cc_lang_pref=en${v.start ? "&start=" + v.start : ""}" title="Video YouTube" allow="encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></div>`;
+    box.innerHTML = `<div class="yt-frame"><iframe src="https://www.youtube-nocookie.com/embed/${v.id}?playsinline=1&rel=0&cc_lang_pref=en${v.start ? "&start=" + v.start : ""}" title="Video YouTube" allow="encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></div>
+      <p class="small muted" style="margin:-4px 0 10px">Il video non parte ("non disponibile")? Alcuni proprietari bloccano l'incorporamento: <a href="https://www.youtube.com/watch?v=${v.id}${v.start ? "&t=" + v.start + "s" : ""}" target="_blank" rel="noopener" style="color:var(--primary);font-weight:700">aprilo su YouTube ↗</a> e poi torna qui a scrivere cosa hai capito.</p>`;
   };
   $("#ytUrl").oninput = show; show();
   $("#quit").onclick = closeLesson;
