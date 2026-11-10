@@ -6,6 +6,7 @@ const esc = s => String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": 
 const shuffle = a => { a = [...a]; for (let i = a.length - 1; i > 0; i--) { const j = Math.floor(Math.random() * (i + 1)); [a[i], a[j]] = [a[j], a[i]]; } return a; };
 const pick = (a, n) => shuffle(a).slice(0, n);
 const DAY = 86400000;
+const REDUCED = matchMedia("(prefers-reduced-motion: reduce)").matches;
 const dayStr = (d = new Date()) => d.getFullYear() + "-" + String(d.getMonth() + 1).padStart(2, "0") + "-" + String(d.getDate()).padStart(2, "0");
 const key = en => String(en).toLowerCase().trim();
 const isSentence = en => en.trim().split(/\s+/).length >= 4;
@@ -29,6 +30,8 @@ function save() { localStorage.setItem(STORE, JSON.stringify(S)); }
 if (navigator.storage && navigator.storage.persist) navigator.storage.persist().catch(() => {});
 
 /* ============ Contenuti ============ */
+const LEVELS = ["A1", "A2", "B1", "B2"];
+COURSE.sort((a, b) => LEVELS.indexOf(a.level) - LEVELS.indexOf(b.level));
 const ALL = [];
 COURSE.forEach(u => {
   u.words.forEach(([en, it]) => ALL.push({ en, it, kind: "word", unit: u.id }));
@@ -70,7 +73,7 @@ function audioHint() {
   if (hintShown) return; hintShown = true;
   toast("Non senti l'audio? Disattiva la modalità silenziosa (tasto laterale) e alza il volume.", 5000);
 }
-function say(text, slow) {
+function say(text, slow, opts = {}) {
   const synth = window.speechSynthesis;
   if (!synth) { audioHint(); return; }
   const u = new SpeechSynthesisUtterance(String(text).replace(/ \/ /g, ", "));
@@ -83,6 +86,8 @@ function say(text, slow) {
   }
   u.lang = acc;
   u.rate = slow ? 0.55 : S.settings.rate;
+  if (opts.pitch) u.pitch = opts.pitch;
+  if (opts.onend) { u.onend = opts.onend; u.onerror = opts.onend; }
   u.volume = 1;
   lastUtt = u; // evita che iOS perda il riferimento all'audio
   let started = false;
@@ -109,6 +114,7 @@ document.addEventListener("click", e => {
   const w = e.target.closest("[data-w]");
   if (!w) return;
   e.stopPropagation();
+  pauseDialogue();
   say(w.dataset.w);
   if (w.closest(".bubble, .sent")) { const t = lookup(w.dataset.w); if (t) toast(`${w.dataset.w} = ${t}`); }
 }, true);
@@ -137,7 +143,7 @@ const CONTR = { "i'm": "i am", "you're": "you are", "he's": "he is", "she's": "s
   "let's": "let us", "isn't": "is not", "aren't": "are not", "wasn't": "was not", "what's": "what is", "that's": "that is", "there's": "there is",
   "where's": "where is", "i've": "i have", "we've": "we have", "you've": "you have", "couldn't": "could not", "wouldn't": "would not", "shouldn't": "should not" };
 function norm(s) {
-  s = String(s).toLowerCase().replace(/[’‘`´]/g, "'").replace(/[.,!?;:"()¿¡]/g, " ").replace(/\s+/g, " ").trim();
+  s = String(s).toLowerCase().replace(/[’‘`´]/g, "'").replace(/[.,!?;:"()¿¡…]/g, " ").replace(/\s+/g, " ").trim();
   return s.split(" ").map(w => CONTR[w] || w).join(" ").replace(/\bcan not\b/g, "cannot").replace(/\bmrs?\b/g, m => m);
 }
 function variants(en) { return en.split(" / ").flatMap(v => { const n = norm(v); return n.startsWith("to ") ? [n, n.slice(3)] : [n]; }); }
@@ -161,10 +167,10 @@ function judgeText(input, item) {
 function distract(item, field, n) {
   const seen = new Set([key(item[field])]); const out = [];
   const cands = shuffle(pool().filter(x => x.kind === item.kind)).sort((a, b) => (b.unit === item.unit) - (a.unit === item.unit));
-  for (const c of cands) { const t = key(c[field]); if (!seen.has(t) && c.it !== item.it) { seen.add(t); out.push(c[field]); } if (out.length >= n) break; }
+  for (const c of cands) { const t = key(c[field]); if (!seen.has(t) && c.it !== item.it && key(c.en) !== key(item.en)) { seen.add(t); out.push(c[field]); } if (out.length >= n) break; }
   return out;
 }
-const tilesOf = en => en.replace(/[.,!?]/g, "").split(/\s+/).filter(Boolean);
+const tilesOf = en => en.replace(/[.,!?…]/g, "").split(/\s+/).filter(Boolean);
 function buildExercises(items, o = {}) {
   const words = items.filter(i => i.kind === "word"), sents = items.filter(i => i.kind === "sentence");
   const intro = o.intro ? words.filter(w => !S.srs[key(w.en)]).map(item => ({ t: "intro", item })) : [];
@@ -186,13 +192,29 @@ function buildExercises(items, o = {}) {
 /* ============ Motore lezione ============ */
 let L = null;
 const overlay = $("#overlay");
+let overlayTimer = null;
+function showOverlay() {
+  clearTimeout(overlayTimer);
+  if (overlay.hidden || overlay.classList.contains("leaving")) {
+    overlay.classList.remove("leaving"); overlay.hidden = false;
+    overlay.classList.remove("entering"); void overlay.offsetWidth; overlay.classList.add("entering");
+  }
+  document.body.style.overflow = "hidden";
+}
+function hideOverlay() {
+  if (overlay.hidden) return;
+  overlay.classList.remove("entering"); overlay.classList.add("leaving");
+  clearTimeout(overlayTimer);
+  overlayTimer = setTimeout(() => { overlay.hidden = true; overlay.classList.remove("leaving"); overlay.innerHTML = ""; }, REDUCED ? 0 : 230);
+  document.body.style.overflow = "";
+}
 function startLesson(cfg) {
   if (!cfg.exercises.length) return toast("Nessun esercizio disponibile qui.");
-  L = { ...cfg, queue: cfg.exercises, pos: 0, first: 0, wrong: 0, answered: 0, results: {}, map: {}, tries: new Map() };
-  overlay.hidden = false; document.body.style.overflow = "hidden";
+  L = { ...cfg, queue: cfg.exercises, pos: 0, first: 0, wrong: 0, answered: 0, results: {}, map: {}, tries: new Map(), pct: 0 };
+  showOverlay();
   renderEx();
 }
-function closeLesson() { overlay.hidden = true; overlay.innerHTML = ""; document.body.style.overflow = ""; L = null; if (window.speechSynthesis) speechSynthesis.cancel(); render(); }
+function closeLesson() { L = null; stopDialogue(); if (window.speechSynthesis) speechSynthesis.cancel(); hideOverlay(); render({ anim: true }); }
 function record(item, ok) {
   const k = key(item.en); L.map[k] = item;
   L.results[k] = (L.results[k] ?? true) && ok;
@@ -205,12 +227,14 @@ function renderEx() {
   overlay.innerHTML = `<div class="lesson">
     <div class="lesson-top">
       <button class="x" id="quit" aria-label="Esci">✕</button>
-      <div class="bar"><i style="width:${pct}%"></i></div>
+      <div class="bar"><i style="width:${L.pct}%"></i></div>
       ${ex.item ? `<button class="star-btn ${saved ? "on" : ""}" id="star" aria-label="Salva parola">${saved ? "★" : "☆"}</button>` : `<span style="width:36px"></span>`}
     </div>
-    <div class="ex-body" id="exBody"></div>
+    <div class="ex-body ex-in" id="exBody"></div>
     <div class="ex-foot" id="exFoot"><button class="btn primary block" id="check" disabled>Verifica</button></div>
   </div>`;
+  requestAnimationFrame(() => requestAnimationFrame(() => { const b = $(".lesson-top .bar i"); if (b) b.style.width = pct + "%"; }));
+  L.pct = pct;
   $("#quit").onclick = () => { if (L.answered < 2 || confirm("Vuoi uscire dalla lezione? I progressi di questa lezione andranno persi.")) closeLesson(); };
   const st = $("#star");
   if (st) st.onclick = () => { const added = addToNotebook(ex.item.en, ex.item.it, "", "esercizio"); st.textContent = "★"; st.classList.add("on"); toast(added ? "Salvata nelle tue parole ⭐" : "Già nelle tue parole"); };
@@ -508,14 +532,23 @@ function closeModal() { const m = $("#modal"); m.hidden = true; m.innerHTML = ""
 /* ============ Viste ============ */
 let tab = localStorage.getItem("ew-tab") || "learn";
 let wordFilter = "all", wordQuery = "";
-$$("#tabs button").forEach(b => b.onclick = () => { tab = b.dataset.tab; localStorage.setItem("ew-tab", tab); render(); window.scrollTo(0, 0); });
+const TAB_ORDER = ["learn", "talk", "review", "words", "profile"];
+$$("#tabs button").forEach(b => b.onclick = () => {
+  const prev = tab; tab = b.dataset.tab; localStorage.setItem("ew-tab", tab);
+  if (prev === tab) { window.scrollTo({ top: 0, behavior: REDUCED ? "auto" : "smooth" }); return; }
+  window.scrollTo(0, 0);
+  render({ anim: true, dir: TAB_ORDER.indexOf(tab) > TAB_ORDER.indexOf(prev) ? 1 : -1 });
+});
 
-function render() {
+function render(o = {}) {
+  if (!VIEWS[tab]) tab = "learn";
   $$("#tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === tab));
   const pr = progressToday();
   $("#topbar").innerHTML = `<div class="brand">English <b>Work</b></div>
     <div class="pills"><span class="pill" title="Serie di giorni">🔥 ${currentStreak()}</span><span class="pill" title="XP di oggi">⚡ ${pr.xp}/${S.settings.goal}</span></div>`;
-  VIEWS[tab]($("#view"));
+  const v = $("#view");
+  VIEWS[tab](v);
+  if (o.anim) animatePage(v, o.dir || 0);
 }
 
 function nextLesson() {
@@ -552,7 +585,7 @@ const VIEWS = {
       <div class="section-title">Percorso · tutte le unità sono sbloccate</div>`;
     let lastLevel = "";
     COURSE.forEach(u => {
-      if (u.level !== lastLevel) { lastLevel = u.level; html += `<div class="section-title">Livello ${u.level} ${u.level === "A1" ? "· Base" : u.level === "A2" ? "· Elementare" : "· Intermedio"}</div>`; }
+      if (u.level !== lastLevel) { lastLevel = u.level; html += `<div class="section-title">Livello ${u.level} ${u.level === "A1" ? "· Base" : u.level === "A2" ? "· Elementare" : u.level === "B1" ? "· Intermedio" : "· Intermedio avanzato"}</div>`; }
       const ls = lessonsOf(u); const nDone = ls.filter((_, i) => S.done[u.id + "-" + i]).length;
       html += `<div class="card"><div class="unit-head"><div class="unit-icon">${u.icon}</div>
         <div class="grow"><b>${esc(u.title)}</b><div class="small muted"><span class="badge">${u.level}</span>${nDone}/4 lezioni · ${u.words.length} parole</div>
@@ -722,7 +755,7 @@ function startFlash() {
   if (!S.notebook.length) return toast("Aggiungi prima qualche parola");
   const deck = [...S.notebook].sort((a, b) => ((S.srs[key(a.en)] || {}).d || 0) - ((S.srs[key(b.en)] || {}).d || 0)).slice(0, 20);
   let i = 0, known = 0, front = Math.random() < 0.5 ? "en" : "it";
-  overlay.hidden = false; document.body.style.overflow = "hidden";
+  showOverlay();
   const draw = () => {
     if (i >= deck.length) {
       if (known) addXP(Math.min(20, known)); save();
@@ -750,6 +783,121 @@ function startFlash() {
   draw();
 }
 
+/* ============ Animazioni ============ */
+let revealObs = null;
+function animatePage(v, dir) {
+  if (REDUCED) return;
+  v.classList.remove("page-in", "from-right", "from-left", "from-none");
+  void v.offsetWidth; // riavvia l'animazione
+  v.classList.add("page-in", dir > 0 ? "from-right" : dir < 0 ? "from-left" : "from-none");
+  // Effetto di scorrimento: gli elementi sotto lo schermo compaiono quando ci arrivi
+  if (revealObs) revealObs.disconnect();
+  const els = $$(":scope > .card, :scope > .reveal", v);
+  if (!("IntersectionObserver" in window)) return;
+  revealObs = new IntersectionObserver(entries => entries.forEach(e => {
+    if (e.isIntersecting) { e.target.classList.add("in"); revealObs.unobserve(e.target); }
+  }), { rootMargin: "0px 0px -20px 0px" });
+  let n = 0;
+  els.forEach(el => {
+    if (el.getBoundingClientRect().top < innerHeight) { el.classList.add("pop-in"); el.style.animationDelay = Math.min(n++, 7) * 45 + "ms"; }
+    else { el.classList.add("rv"); revealObs.observe(el); }
+  });
+}
+
+/* ============ Dialoghi ============ */
+let D = null;
+function pauseDialogue() { if (D && D.playing) { D.playing = false; D.token++; markPlaying(-1); updatePlayBtn(); } }
+function stopDialogue() { if (D) { D.playing = false; D.token++; } D = null; }
+function markPlaying(i) { $$(".msg", overlay).forEach(m => m.classList.toggle("speaking", +m.dataset.i === i)); }
+function updatePlayBtn() { const b = $("#playAll"); if (b && D) b.textContent = D.playing ? "⏸ Pausa" : "▶ Ascolta tutto"; }
+function playLine(i, token) {
+  if (!D || token !== D.token || !D.playing) return;
+  const lines = D.d.lines;
+  if (i >= lines.length) { D.playing = false; markPlaying(-1); updatePlayBtn(); return; }
+  const [who, en] = lines[i];
+  markPlaying(i);
+  const m = $(`.msg[data-i="${i}"]`, overlay);
+  if (m) m.scrollIntoView({ block: "nearest", behavior: REDUCED ? "auto" : "smooth" });
+  let moved = false;
+  const next = () => { if (moved) return; moved = true; clearTimeout(fallback); setTimeout(() => playLine(i + 1, token), 350); };
+  // se il telefono non segnala la fine dell'audio, andiamo avanti comunque
+  const fallback = setTimeout(next, 1500 + en.split(" ").length * 520 / S.settings.rate);
+  say(en, false, { pitch: who === "A" ? 1.05 : 0.8, onend: next });
+}
+function openDialogue(d) {
+  stopDialogue();
+  D = { d, playing: false, showIt: false, token: 0 };
+  showOverlay();
+  drawDialogue();
+}
+function drawDialogue() {
+  const { d } = D, done = S.done["d-" + d.id];
+  overlay.innerHTML = `<div class="lesson"><div class="lesson-top"><button class="x" id="quit" aria-label="Chiudi">✕</button>
+    <div class="grow"><b>${d.icon} ${esc(d.title)}</b><div class="small muted"><span class="badge">${d.level}</span>${done ? "✓ completato" : "Tocca un messaggio per la traduzione"}</div></div></div>
+    <div class="ex-body ex-in"><p class="muted small" style="margin-top:0">${esc(d.context)}</p>
+    <div class="chat">${d.lines.map(([who, en, it], i) => `<div class="msg ${who === "A" ? "me" : "them"}" data-i="${i}">
+      <div class="sent">${tapText(en, true)}</div><div class="tr" ${D.showIt ? "" : "hidden"}>${esc(it)}</div>
+      <button class="mini" data-play="${i}" aria-label="Ascolta">🔊</button></div>`).join("")}</div></div>
+    <div class="ex-foot"><div class="row" style="margin-bottom:10px"><button class="btn block" id="playAll">▶ Ascolta tutto</button>
+    <button class="btn ghost block" id="trT">${D.showIt ? "Nascondi" : "Mostra"} 🇮🇹</button></div>
+    <button class="btn primary block" id="dq">Esercizi sul dialogo ➜</button></div></div>`;
+  $("#quit").onclick = closeLesson;
+  $$(".msg", overlay).forEach(m => m.onclick = e => {
+    const p = e.target.closest("[data-play]");
+    if (p) { pauseDialogue(); say(D.d.lines[+p.dataset.play][1], false, { pitch: D.d.lines[+p.dataset.play][0] === "A" ? 1.05 : 0.8 }); return; }
+    const t = $(".tr", m); t.hidden = !t.hidden;
+  });
+  $("#playAll").onclick = () => {
+    if (D.playing) return pauseDialogue();
+    D.playing = true; D.token++; updatePlayBtn(); playLine(0, D.token);
+  };
+  $("#trT").onclick = () => { D.showIt = !D.showIt; $$(".tr", overlay).forEach(t => t.hidden = !D.showIt); $("#trT").textContent = (D.showIt ? "Nascondi" : "Mostra") + " 🇮🇹"; };
+  $("#dq").onclick = () => startDialogueQuiz(d);
+}
+function startDialogueQuiz(d) {
+  pauseDialogue();
+  const items = d.lines.map(([, en, it]) => ({ en, it, kind: "sentence", unit: "dlg" }))
+    .filter(x => { const n = x.en.split(" ").length; return n >= 4 && n <= 14 && !/\d|[A-Z]-[A-Z]/.test(x.en); });
+  const ex = [
+    ...d.quiz.map(q => ({ t: "quiz", ...q })),
+    ...pick(items, 3).map((item, i) => ({ t: ["build_listen", "build", "mc_sent"][i % 3], item }))
+  ];
+  const run = () => { D = null; startLesson({ title: "Dialogo · " + d.title, exercises: shuffle(ex).map(e => ({ ...e })), doneKey: "d-" + d.id, again: run, autoSave: false }); };
+  run();
+}
+EX.quiz = (ex, el) => {
+  el.innerHTML = `<div class="ex-label">${esc(ex.q)}</div><p class="muted small" style="margin-top:-8px">Domanda sul dialogo</p>`;
+  const get = options(el, shuffle(ex.o), () => {});
+  const right = ex.o[ex.a];
+  L.check = () => { const c = get(); markOptions(el, right, c); return { ok: c === right, correct: esc(right) }; };
+};
+
+/* ============ Vista "Conversa": dialoghi + frasario ============ */
+const openCats = new Set();
+VIEWS.talk = v => {
+  const saved = en => S.notebook.some(n => key(n.en) === key(en));
+  v.innerHTML = `<div class="section-title">Dialoghi di lavoro</div>
+    ${DIALOGUES.map(d => `<button class="card dlg" data-d="${d.id}" style="width:100%;text-align:left"><div class="row"><div class="unit-icon">${d.icon}</div>
+      <div class="grow"><b>${esc(d.title)}</b><div class="small muted"><span class="badge">${d.level}</span>${S.done["d-" + d.id] ? "✓ completato" : d.lines.length + " battute"}</div></div><span class="muted">›</span></div></button>`).join("")}
+    <div class="section-title">Frasi pronte da usare</div>
+    ${PHRASEBOOK.map((c, ci) => `<div class="card cat ${openCats.has(ci) ? "open" : ""}" data-c="${ci}">
+      <button class="cat-head row" style="width:100%;text-align:left"><span style="font-size:22px">${c.icon}</span><b class="grow">${esc(c.title)}</b><span class="muted small">${c.items.length}</span><span class="chev">⌄</span></button>
+      <div class="cat-body"><div>${c.items.map(([en, it], pi) => `<div class="word-row"><button class="iconbtn" data-say="${esc(en)}">🔊</button>
+        <div class="grow"><div class="en">${esc(en)}</div><div class="it">${esc(it)}</div></div>
+        <button class="star-btn ${saved(en) ? "on" : ""}" data-sv="${ci}-${pi}" aria-label="Salva">${saved(en) ? "★" : "☆"}</button></div>`).join("")}</div></div></div>`).join("")}`;
+  $$("[data-d]", v).forEach(b => b.onclick = () => openDialogue(DIALOGUES.find(d => d.id === b.dataset.d)));
+  $$(".cat-head", v).forEach(h => h.onclick = () => {
+    const c = h.closest(".cat"), ci = +c.dataset.c;
+    c.classList.toggle("open"); if (c.classList.contains("open")) openCats.add(ci); else openCats.delete(ci);
+  });
+  $$("[data-say]", v).forEach(b => b.onclick = () => say(b.dataset.say));
+  $$("[data-sv]", v).forEach(b => b.onclick = () => {
+    const [ci, pi] = b.dataset.sv.split("-").map(Number), [en, it] = PHRASEBOOK[ci].items[pi];
+    if (addToNotebook(en, it, "", "frasario")) { b.textContent = "★"; b.classList.add("on"); toast("Salvata nelle tue parole ⭐"); }
+    else toast("È già nelle tue parole");
+  });
+};
+
 /* ============ Avvio ============ */
-render();
+render({ anim: true });
 if ("serviceWorker" in navigator) window.addEventListener("load", () => navigator.serviceWorker.register("sw.js").catch(() => {}));

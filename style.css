@@ -185,3 +185,63 @@ textarea.answer:focus, input.answer:focus { border-color: var(--primary); }
 @keyframes shake { 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
 .tw { cursor: pointer; border-bottom: 2px dotted color-mix(in srgb, var(--primary) 45%, transparent); border-radius: 2px; }
 .tw:active { background: var(--primary-soft); }
+
+/* ===== Animazioni ===== */
+:root { --ease: cubic-bezier(.22,.8,.3,1); }
+#view.page-in { animation: pageIn .32s var(--ease) both; }
+#view.page-in.from-right { --dx: 28px; }
+#view.page-in.from-left { --dx: -28px; }
+#view.page-in.from-none { --dx: 0px; }
+@keyframes pageIn { from { opacity: 0; transform: translate3d(var(--dx, 0), 8px, 0); } to { opacity: 1; transform: none; } }
+.pop-in { animation: popIn .42s var(--ease) both; }
+@keyframes popIn { from { opacity: 0; transform: translateY(14px) scale(.985); } to { opacity: 1; transform: none; } }
+#view .rv { opacity: 0; transform: translateY(26px); transition: opacity .5s var(--ease), transform .5s var(--ease); }
+#view .rv.in { opacity: 1; transform: none; }
+#overlay.entering { animation: ovIn .3s var(--ease) both; }
+#overlay.leaving { animation: ovOut .22s ease-in both; pointer-events: none; }
+@keyframes ovIn { from { opacity: 0; transform: translateY(40px); } to { opacity: 1; transform: none; } }
+@keyframes ovOut { to { opacity: 0; transform: translateY(30px); } }
+.ex-in { animation: exIn .3s var(--ease) both; }
+@keyframes exIn { from { opacity: 0; transform: translateX(34px); } to { opacity: 1; transform: none; } }
+.ex-foot.ok, .ex-foot.bad { animation: fbIn .25s var(--ease) both; }
+@keyframes fbIn { from { transform: translateY(18px); opacity: .4; } to { transform: none; opacity: 1; } }
+.answer-line .tile { animation: tileIn .18s var(--ease) both; }
+@keyframes tileIn { from { transform: scale(.7); opacity: 0; } to { transform: none; opacity: 1; } }
+.opt, .tile, .card, .lesson-btn, .chip, .iconbtn { transition: transform .12s, background-color .2s, border-color .2s; }
+.opt:active, .tile:active, button.card:active, .lesson-btn:active, .chip:active, .iconbtn:active { transform: scale(.97); }
+.done-screen .trophy { animation: trophy .7s var(--ease) both; }
+@keyframes trophy { 0% { transform: scale(.3) rotate(-20deg); opacity: 0; } 60% { transform: scale(1.15) rotate(6deg); opacity: 1; } 100% { transform: none; } }
+.done-screen .stat { animation: popIn .45s var(--ease) both; }
+.done-screen .stat:nth-child(2) { animation-delay: .08s; } .done-screen .stat:nth-child(3) { animation-delay: .16s; }
+#toast:not([hidden]) { animation: toastIn .25s var(--ease) both; }
+@keyframes toastIn { from { opacity: 0; transform: translate(-50%, 12px); } to { opacity: 1; transform: translate(-50%, 0); } }
+#tabs button span { transition: transform .2s var(--ease), filter .2s, opacity .2s; }
+#tabs button.on span { transform: translateY(-2px) scale(1.12); }
+
+/* ===== Dialoghi ===== */
+.chat { display: flex; flex-direction: column; gap: 10px; }
+.msg { position: relative; max-width: 86%; padding: 10px 40px 10px 14px; border-radius: 18px; background: var(--card); border: 1px solid var(--line); cursor: pointer; transition: box-shadow .25s, transform .25s; }
+.msg.them { align-self: flex-start; border-bottom-left-radius: 6px; }
+.msg.me { align-self: flex-end; background: var(--primary-soft); border-color: transparent; border-bottom-right-radius: 6px; }
+.msg .sent { font-size: 17px; }
+.msg .tr { color: var(--muted); font-size: 14px; margin-top: 4px; }
+.msg .mini { position: absolute; right: 6px; top: 6px; width: 30px; height: 30px; border-radius: 10px; font-size: 15px; }
+.msg.speaking { box-shadow: 0 0 0 2px var(--accent); transform: scale(1.02); }
+.ex-body .chat .msg { animation: popIn .35s var(--ease) both; }
+.chat .msg:nth-child(2) { animation-delay: .05s; } .chat .msg:nth-child(3) { animation-delay: .1s; } .chat .msg:nth-child(4) { animation-delay: .15s; }
+.chat .msg:nth-child(5) { animation-delay: .2s; } .chat .msg:nth-child(6) { animation-delay: .25s; } .chat .msg:nth-child(n+7) { animation-delay: .3s; }
+
+/* ===== Frasario (categorie apribili) ===== */
+.cat { padding: 0; overflow: hidden; }
+.cat-head { padding: 14px 16px; gap: 12px; }
+.cat .chev { color: var(--muted); transition: transform .25s var(--ease); font-size: 18px; }
+.cat.open .chev { transform: rotate(180deg); }
+.cat-body { display: grid; grid-template-rows: 0fr; transition: grid-template-rows .3s var(--ease); }
+.cat-body > div { overflow: hidden; padding: 0 16px; }
+.cat.open .cat-body { grid-template-rows: 1fr; }
+.cat.open .cat-body > div { padding-bottom: 6px; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: .001ms !important; animation-delay: 0s !important; transition-duration: .001ms !important; }
+  #view .rv { opacity: 1; transform: none; }
+}
