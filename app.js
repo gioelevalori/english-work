@@ -60,21 +60,58 @@ const isDue = en => { const r = S.srs[key(en)]; return !r || r.d <= Date.now(); 
 const boxOf = en => (S.srs[key(en)] || {}).b || 0;
 
 /* ============ Voce ============ */
-let voices = [];
+let voices = [], lastUtt = null, hintShown = false;
+const IS_IOS = /iphone|ipad|ipod/i.test(navigator.userAgent) || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
 function loadVoices() { voices = window.speechSynthesis ? speechSynthesis.getVoices() : []; }
 if (window.speechSynthesis) { loadVoices(); speechSynthesis.onvoiceschanged = loadVoices; }
+// iOS 17+: fa suonare l'audio anche con il tasto silenzioso attivo
+try { if (navigator.audioSession) navigator.audioSession.type = "playback"; } catch (e) {}
+function audioHint() {
+  if (hintShown) return; hintShown = true;
+  toast("Non senti l'audio? Disattiva la modalità silenziosa (tasto laterale) e alza il volume.", 5000);
+}
 function say(text, slow) {
-  if (!window.speechSynthesis) return;
-  speechSynthesis.cancel();
-  const u = new SpeechSynthesisUtterance(text.replace(/ \/ /g, ", "));
+  const synth = window.speechSynthesis;
+  if (!synth) { audioHint(); return; }
+  const u = new SpeechSynthesisUtterance(String(text).replace(/ \/ /g, ", "));
   const acc = S.settings.accent, norm = v => v.lang.replace("_", "-");
-  const v = voices.find(v => norm(v) === acc && /premium|enhanced|natural|neural/i.test(v.name))
-    || voices.find(v => norm(v) === acc) || voices.find(v => /^en/i.test(v.lang));
-  if (v) u.voice = v;
+  // Su iPhone le voci "premium/enhanced" possono essere elencate ma non scaricate (= silenzio):
+  // lì lasciamo scegliere a iOS la voce di sistema per la lingua.
+  if (!IS_IOS) {
+    const v = voices.find(v => norm(v) === acc && /natural|neural|google/i.test(v.name)) || voices.find(v => norm(v) === acc) || voices.find(v => /^en/i.test(v.lang));
+    if (v) u.voice = v;
+  }
   u.lang = acc;
   u.rate = slow ? 0.55 : S.settings.rate;
-  speechSynthesis.speak(u);
+  u.volume = 1;
+  lastUtt = u; // evita che iOS perda il riferimento all'audio
+  let started = false;
+  u.onstart = () => { started = true; };
+  const go = () => {
+    if (synth.paused) synth.resume();
+    synth.speak(u);
+    setTimeout(() => { if (!started && lastUtt === u && !synth.speaking) audioHint(); }, 3000);
+  };
+  // Su iOS cancel() seguito subito da speak() a volte non produce suono: aspettiamo un attimo.
+  if (synth.speaking || synth.pending) { synth.cancel(); setTimeout(go, 120); } else go();
 }
+// Tocca una parola inglese per ascoltarla (e vedere la traduzione se la conosciamo)
+function tapText(text, sentence) {
+  if (!sentence) return `<span class="tw" data-w="${esc(text)}">${esc(text)}</span>`;
+  return String(text).split(/(\s+)/).map(p => /\s/.test(p) || !p ? p : `<span class="tw" data-w="${esc(p.replace(/[.,!?;:]/g, ""))}">${esc(p)}</span>`).join("");
+}
+function lookup(w) {
+  const k = key(w); if (!k) return "";
+  const hit = pool().find(x => x.kind === "word" && (key(x.en) === k || key(x.en) === "to " + k || x.en.split(" / ").some(v => key(v) === k)));
+  return hit ? hit.it : "";
+}
+document.addEventListener("click", e => {
+  const w = e.target.closest("[data-w]");
+  if (!w) return;
+  e.stopPropagation();
+  say(w.dataset.w);
+  if (w.closest(".bubble, .sent")) { const t = lookup(w.dataset.w); if (t) toast(`${w.dataset.w} = ${t}`); }
+}, true);
 const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
 
 /* ============ Suoni ============ */
@@ -253,9 +290,9 @@ function tileBuilder(el, item) {
   const chosen = [];
   const line = $("#line", el);
   $$("#bank .tile", el).forEach(b => b.onclick = () => {
-    const t = tiles[+b.dataset.i]; chosen.push(t); b.classList.add("used");
+    const t = tiles[+b.dataset.i]; say(t.w); chosen.push(t); b.classList.add("used");
     const nb = document.createElement("button"); nb.className = "tile"; nb.textContent = t.w;
-    nb.onclick = () => { chosen.splice(chosen.indexOf(t), 1); nb.remove(); b.classList.remove("used"); ready(chosen.length > 0); };
+    nb.onclick = () => { say(t.w); chosen.splice(chosen.indexOf(t), 1); nb.remove(); b.classList.remove("used"); ready(chosen.length > 0); };
     line.appendChild(nb); ready(true);
   });
   return () => chosen.map(t => t.w).join(" ");
@@ -267,7 +304,7 @@ const EX = {
     const { item } = ex;
     el.innerHTML = `<div class="ex-label">Nuova parola ✨</div>
       <div class="card intro-card">${speakerBtns(item.en, true).replace('class="speaker"', 'class="speaker" style="margin:0 auto"').replace('class="speaker slow"', 'class="speaker slow" style="margin:8px auto 0"')}
-      <div class="en">${esc(item.en)}</div><div class="it">${esc(item.it)}</div></div>
+      <div class="en">${tapText(item.en)}</div><div class="it">${esc(item.it)}</div></div>
       <p class="muted small" style="text-align:center">Ascoltala e ripetila ad alta voce. Tocca ☆ in alto per salvarla subito.</p>`;
     say(item.en);
     const f = $("#exFoot"); f.innerHTML = `<button class="btn primary block" id="next">Ho capito</button>`;
@@ -275,7 +312,7 @@ const EX = {
   },
   mc_en_it(ex, el) {
     const { item } = ex;
-    el.innerHTML = `<div class="ex-label">Cosa significa?</div><div class="prompt">${speakerBtns(item.en)}<div class="big">${esc(item.en)}</div></div>`;
+    el.innerHTML = `<div class="ex-label">Cosa significa?</div><div class="prompt">${speakerBtns(item.en)}<div class="big">${tapText(item.en)}</div></div>`;
     say(item.en);
     const list = shuffle([item.it, ...distract(item, "it", 3)]);
     const get = options(el, list, () => {});
@@ -293,7 +330,7 @@ const EX = {
     el.innerHTML = `<div class="ex-label">Cosa hai sentito?</div><div class="listen-big">${speakerBtns(item.en, true)}</div>`;
     say(item.en);
     const list = shuffle([item.en, ...distract(item, "en", 3)]);
-    const get = options(el, list, () => {});
+    const get = options(el, list, () => {}, true);
     L.check = () => { const c = get(); markOptions(el, item.en, c); return { ok: c === item.en, correct: `${esc(item.en)} — <span class="muted">${esc(item.it)}</span>`, show: `${esc(item.en)} = ${esc(item.it)}` }; };
   },
   listen_type(ex, el) {
@@ -324,7 +361,7 @@ const EX = {
   },
   mc_sent(ex, el) {
     const { item } = ex;
-    el.innerHTML = `<div class="ex-label">Scegli la traduzione giusta</div><div class="prompt">${speakerBtns(item.en)}<div class="bubble">${esc(item.en)}</div></div>`;
+    el.innerHTML = `<div class="ex-label">Scegli la traduzione giusta</div><div class="prompt">${speakerBtns(item.en)}<div class="bubble">${tapText(item.en, true)}</div></div>`;
     say(item.en);
     const list = shuffle([item.it, ...distract(item, "it", 2)]);
     const get = options(el, list, () => {});
@@ -346,7 +383,7 @@ const EX = {
   speak(ex, el) {
     const { item } = ex;
     el.innerHTML = `<div class="ex-label">Leggi ad alta voce</div>
-      <div class="prompt">${speakerBtns(item.en)}<div class="bubble">${esc(item.en)}</div></div>
+      <div class="prompt">${speakerBtns(item.en)}<div class="bubble">${tapText(item.en, true)}</div></div>
       <p class="muted small">${esc(item.it)}</p>
       <button class="mic" id="mic" aria-label="Parla">🎤</button><div class="heard" id="heard">Tocca il microfono e parla</div>
       <div style="text-align:center;margin-top:14px"><button class="btn ghost sm" id="skip">Non posso parlare ora</button></div>`;
@@ -460,7 +497,7 @@ async function translate(text, from, to) {
 
 /* ============ UI generica ============ */
 let toastT;
-function toast(msg) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, 2200); }
+function toast(msg, ms) { const t = $("#toast"); t.textContent = msg; t.hidden = false; clearTimeout(toastT); toastT = setTimeout(() => t.hidden = true, ms || 2200); }
 function modal(html, onMount) {
   const m = $("#modal"); m.innerHTML = `<div class="sheet">${html}</div>`; m.hidden = false;
   m.onclick = e => { if (e.target === m) closeModal(); };
@@ -493,7 +530,7 @@ function openLesson(u, i) {
 function showTip(u) {
   modal(`<h2>${u.icon} ${esc(u.title)}</h2><div class="tip">${u.tip}</div>
     <div class="section-title">Vocaboli dell'unità</div>
-    <div>${u.words.map(([en, it]) => `<div class="word-row"><div class="grow"><div class="en">${esc(en)}</div><div class="it">${esc(it)}</div></div><button class="iconbtn" data-say="${esc(en)}">🔊</button></div>`).join("")}</div>
+    <div>${u.words.map(([en, it]) => `<div class="word-row"><div class="grow"><div class="en">${tapText(en)}</div><div class="it">${esc(it)}</div></div><button class="iconbtn" data-say="${esc(en)}">🔊</button></div>`).join("")}</div>
     <button class="btn primary block" style="margin-top:14px" id="mclose">Chiudi</button>`, s => {
     $$("[data-say]", s).forEach(b => b.onclick = () => say(b.dataset.say));
     $("#mclose", s).onclick = closeModal;
@@ -573,7 +610,7 @@ const VIEWS = {
       <div class="chips">${[["all", "Tutte"], ["due", "Da ripassare"], ["learned", "Imparate"], ["mine", "Aggiunte da me"], ["az", "A → Z"]].map(([k, t]) => `<button class="chip ${wordFilter === k ? "on" : ""}" data-f="${k}">${t}</button>`).join("")}</div>
       ${list.length ? `<div class="card list-card">${list.map(n => `<div class="word-row">
         <button class="iconbtn" data-say="${esc(n.en)}">🔊</button>
-        <div class="grow"><div class="en">${esc(n.en)}${dots(n.en)}</div><div class="it">${esc(n.it)}</div>${n.note ? `<div class="note">${esc(n.note)}</div>` : ""}</div>
+        <div class="grow"><div class="en">${tapText(n.en)}${dots(n.en)}</div><div class="it">${esc(n.it)}</div>${n.note ? `<div class="note">${esc(n.note)}</div>` : ""}</div>
         <button class="iconbtn" data-edit="${n.id}" aria-label="Modifica">✏️</button></div>`).join("")}</div>`
         : `<div class="empty"><div class="e">📒</div><p>${S.notebook.length ? "Nessun risultato." : "Qui troverai le parole che impari.<br>Si salvano da sole al termine delle lezioni, oppure toccando ☆ durante un esercizio. Puoi anche aggiungerle a mano."}</p></div>`}
       ${S.notebook.length >= 4 ? `<div class="row" style="margin-top:4px"><button class="btn block" id="fl">🃏 Flashcard</button><button class="btn block" id="csv">⬇️ Esporta CSV</button></div>` : ""}`;

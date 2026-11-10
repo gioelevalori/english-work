@@ -183,3 +183,5 @@ textarea.answer:focus, input.answer:focus { border-color: var(--primary); }
 .install { background: var(--primary-soft); border: 0; }
 .shake { animation: shake .35s; }
 @keyframes shake { 25% { transform: translateX(-6px); } 75% { transform: translateX(6px); } }
+.tw { cursor: pointer; border-bottom: 2px dotted color-mix(in srgb, var(--primary) 45%, transparent); border-radius: 2px; }
+.tw:active { background: var(--primary-soft); }
