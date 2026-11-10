@@ -14,7 +14,7 @@ const isSentence = en => en.trim().split(/\s+/).length >= 4;
 /* ============ Stato salvato ============ */
 const STORE = "english-work-v1";
 const DEFAULTS = {
-  xp: 0, streak: 0, best: 0, lastDay: null, days: {}, done: {}, srs: {}, notebook: [],
+  xp: 0, streak: 0, best: 0, lastDay: null, days: {}, done: {}, srs: {}, notebook: [], journal: [],
   settings: { goal: 30, accent: "en-US", rate: 0.9, autoSave: true, speak: true, sound: true }
 };
 const clone = o => JSON.parse(JSON.stringify(o));
@@ -73,9 +73,53 @@ function audioHint() {
   if (hintShown) return; hintShown = true;
   toast("Non senti l'audio? Disattiva la modalità silenziosa (tasto laterale) e alza il volume.", 5000);
 }
+/* Audio registrato (file MP3 con voci neurali), letto dal normale lettore audio:
+   funziona su iPhone anche dove la sintesi vocale del browser resta muta.
+   Per i testi senza file (es. parole aggiunte da te) si usa la voce del telefono. */
+const player = new Audio();
+player.preload = "auto";
+player.setAttribute("playsinline", "");
+let playToken = 0;
+const spokenText = t => String(t).replace(/ \/ /g, ", ").replace(/\s+/g, " ").trim();
+// Deve restare identico a audioId() in tools/collect-audio.js
+function audioId(voice, text) {
+  const s = voice + "|" + spokenText(text).toLowerCase();
+  let h = 0x811c9dc5;
+  for (let i = 0; i < s.length; i++) { h ^= s.charCodeAt(i); h = Math.imul(h, 0x01000193) >>> 0; }
+  return h.toString(36);
+}
+function hasAudio(text, voice = "f") { return typeof AUDIO_IDS !== "undefined" && AUDIO_IDS.has(audioId(voice, text)); }
+function stopAudio() {
+  playToken++;
+  try { player.pause(); } catch (e) {}
+  if (window.speechSynthesis && (speechSynthesis.speaking || speechSynthesis.pending)) speechSynthesis.cancel();
+}
 function say(text, slow, opts = {}) {
+  const tok = ++playToken;
+  let ended = false;
+  const done = () => { if (ended || tok !== playToken) return; ended = true; if (opts.onend) opts.onend(); };
+  let voice = opts.voice || "f";
+  if (!hasAudio(text, voice) && hasAudio(text, "f")) voice = "f";
+  if (hasAudio(text, voice)) {
+    if (window.speechSynthesis && (speechSynthesis.speaking || speechSynthesis.pending)) speechSynthesis.cancel();
+    const rate = slow ? 0.7 : ({ 0.7: 0.8, 0.9: 1, 1: 1.1, 1.1: 1.2 }[S.settings.rate] || 1);
+    player.onended = done;
+    player.onerror = () => { if (tok === playToken) speakDevice(text, slow, { ...opts, onend: done }); };
+    player.src = "audio/" + audioId(voice, text) + ".mp3";
+    player.defaultPlaybackRate = rate; player.playbackRate = rate;
+    player.preservesPitch = true; player.webkitPreservesPitch = true;
+    const p = player.play();
+    if (p && p.catch) p.catch(err => {
+      if (tok !== playToken || err.name === "AbortError") return;
+      speakDevice(text, slow, { ...opts, onend: done });
+    });
+    return;
+  }
+  speakDevice(text, slow, { ...opts, onend: done });
+}
+function speakDevice(text, slow, opts = {}) {
   const synth = window.speechSynthesis;
-  if (!synth) { audioHint(); return; }
+  if (!synth) { audioHint(); if (opts.onend) setTimeout(opts.onend, 800); return; }
   const u = new SpeechSynthesisUtterance(String(text).replace(/ \/ /g, ", "));
   const acc = S.settings.accent, norm = v => v.lang.replace("_", "-");
   // Su iPhone le voci "premium/enhanced" possono essere elencate ma non scaricate (= silenzio):
@@ -97,8 +141,9 @@ function say(text, slow, opts = {}) {
     synth.speak(u);
     setTimeout(() => { if (!started && lastUtt === u && !synth.speaking) audioHint(); }, 3000);
   };
-  // Su iOS cancel() seguito subito da speak() a volte non produce suono: aspettiamo un attimo.
-  if (synth.speaking || synth.pending) { synth.cancel(); setTimeout(go, 120); } else go();
+  // speak() deve partire subito dentro il tocco, altrimenti iOS lo blocca
+  if (synth.speaking || synth.pending) synth.cancel();
+  go();
 }
 // Tocca una parola inglese per ascoltarla (e vedere la traduzione se la conosciamo)
 function tapText(text, sentence) {
@@ -114,7 +159,7 @@ document.addEventListener("click", e => {
   const w = e.target.closest("[data-w]");
   if (!w) return;
   e.stopPropagation();
-  pauseDialogue();
+  pauseDialogue(); pauseScene();
   say(w.dataset.w);
   if (w.closest(".bubble, .sent")) { const t = lookup(w.dataset.w); if (t) toast(`${w.dataset.w} = ${t}`); }
 }, true);
@@ -214,7 +259,7 @@ function startLesson(cfg) {
   showOverlay();
   renderEx();
 }
-function closeLesson() { L = null; stopDialogue(); if (window.speechSynthesis) speechSynthesis.cancel(); hideOverlay(); render({ anim: true }); }
+function closeLesson() { L = null; stopDialogue(); stopScene(); stopAudio(); hideOverlay(); render({ anim: true }); }
 function record(item, ok) {
   const k = key(item.en); L.map[k] = item;
   L.results[k] = (L.results[k] ?? true) && ok;
@@ -806,7 +851,7 @@ function animatePage(v, dir) {
 
 /* ============ Dialoghi ============ */
 let D = null;
-function pauseDialogue() { if (D && D.playing) { D.playing = false; D.token++; markPlaying(-1); updatePlayBtn(); } }
+function pauseDialogue() { if (D && D.playing) { D.playing = false; D.token++; stopAudio(); markPlaying(-1); updatePlayBtn(); } }
 function stopDialogue() { if (D) { D.playing = false; D.token++; } D = null; }
 function markPlaying(i) { $$(".msg", overlay).forEach(m => m.classList.toggle("speaking", +m.dataset.i === i)); }
 function updatePlayBtn() { const b = $("#playAll"); if (b && D) b.textContent = D.playing ? "⏸ Pausa" : "▶ Ascolta tutto"; }
@@ -821,8 +866,8 @@ function playLine(i, token) {
   let moved = false;
   const next = () => { if (moved) return; moved = true; clearTimeout(fallback); setTimeout(() => playLine(i + 1, token), 350); };
   // se il telefono non segnala la fine dell'audio, andiamo avanti comunque
-  const fallback = setTimeout(next, 1500 + en.split(" ").length * 520 / S.settings.rate);
-  say(en, false, { pitch: who === "A" ? 1.05 : 0.8, onend: next });
+  const fallback = setTimeout(next, (hasAudio(en, who === "A" ? "m" : "f") ? 4000 : 1500) + en.split(" ").length * 650);
+  say(en, false, { voice: who === "A" ? "m" : "f", pitch: who === "A" ? 1.05 : 0.8, onend: next });
 }
 function openDialogue(d) {
   stopDialogue();
@@ -844,7 +889,7 @@ function drawDialogue() {
   $("#quit").onclick = closeLesson;
   $$(".msg", overlay).forEach(m => m.onclick = e => {
     const p = e.target.closest("[data-play]");
-    if (p) { pauseDialogue(); say(D.d.lines[+p.dataset.play][1], false, { pitch: D.d.lines[+p.dataset.play][0] === "A" ? 1.05 : 0.8 }); return; }
+    if (p) { pauseDialogue(); say(D.d.lines[+p.dataset.play][1], false, { voice: D.d.lines[+p.dataset.play][0] === "A" ? "m" : "f", pitch: D.d.lines[+p.dataset.play][0] === "A" ? 1.05 : 0.8 }); return; }
     const t = $(".tr", m); t.hidden = !t.hidden;
   });
   $("#playAll").onclick = () => {
@@ -876,7 +921,7 @@ EX.quiz = (ex, el) => {
 const openCats = new Set();
 VIEWS.talk = v => {
   const saved = en => S.notebook.some(n => key(n.en) === key(en));
-  v.innerHTML = `<div class="section-title">Dialoghi di lavoro</div>
+  v.innerHTML = scenesHTML() + `<div class="section-title">Dialoghi di lavoro</div>
     ${DIALOGUES.map(d => `<button class="card dlg" data-d="${d.id}" style="width:100%;text-align:left"><div class="row"><div class="unit-icon">${d.icon}</div>
       <div class="grow"><b>${esc(d.title)}</b><div class="small muted"><span class="badge">${d.level}</span>${S.done["d-" + d.id] ? "✓ completato" : d.lines.length + " battute"}</div></div><span class="muted">›</span></div></button>`).join("")}
     <div class="section-title">Frasi pronte da usare</div>
@@ -885,6 +930,7 @@ VIEWS.talk = v => {
       <div class="cat-body"><div>${c.items.map(([en, it], pi) => `<div class="word-row"><button class="iconbtn" data-say="${esc(en)}">🔊</button>
         <div class="grow"><div class="en">${esc(en)}</div><div class="it">${esc(it)}</div></div>
         <button class="star-btn ${saved(en) ? "on" : ""}" data-sv="${ci}-${pi}" aria-label="Salva">${saved(en) ? "★" : "☆"}</button></div>`).join("")}</div></div></div>`).join("")}`;
+  bindScenes(v);
   $$("[data-d]", v).forEach(b => b.onclick = () => openDialogue(DIALOGUES.find(d => d.id === b.dataset.d)));
   $$(".cat-head", v).forEach(h => h.onclick = () => {
     const c = h.closest(".cat"), ci = +c.dataset.c;
@@ -897,6 +943,181 @@ VIEWS.talk = v => {
     else toast("È già nelle tue parole");
   });
 };
+
+/* ============ Scene da serie TV ============ */
+let SC = null;
+const foldText = s => String(s).toLowerCase().normalize("NFD").replace(/[̀-ͯ]/g, "").replace(/[’']/g, "'");
+const nameOf = n => n.replace(/_/g, " ").toLowerCase().replace(/\b\w/g, c => c.toUpperCase());
+function pauseScene() { if (SC && SC.playing) { SC.playing = false; SC.token++; stopAudio(); updateTV(); } }
+function stopScene() { if (SC) { SC.playing = false; SC.token++; } SC = null; }
+
+function scenesHTML() {
+  const last = id => S.journal.find(j => j.scene === id);
+  return `<div class="section-title">Scene da serie TV</div>
+    <p class="muted small" style="margin:-4px 4px 10px">Ascolta la scena come se fossi davanti alla TV, poi scrivi cosa hai capito.</p>
+    ${SCENES.map(s => { const l = last(s.id); return `<button class="card" data-s="${s.id}" style="width:100%;text-align:left"><div class="row"><div class="unit-icon">${s.icon}</div>
+      <div class="grow"><b>${esc(s.title)}</b><div class="small muted"><span class="badge">${s.level}</span>${esc(s.genre)}${l ? ` · ultimo: ${l.score}%` : ""}</div></div><span class="muted">›</span></div></button>`; }).join("")}
+    <button class="card" id="ytNew" style="width:100%;text-align:left"><div class="row"><div class="unit-icon">▶️</div>
+      <div class="grow"><b>La tua scena da YouTube</b><div class="small muted">Incolla il link di una scena della tua serie preferita</div></div><span class="muted">›</span></div></button>
+    ${S.journal.length ? `<div class="card list-card reveal"><div class="section-title" style="margin:12px 0 4px">Il mio diario di ascolto</div>${S.journal.slice(0, 15).map(j => `
+      <div class="word-row" data-j="${j.id}" style="cursor:pointer"><span style="font-size:22px">${j.type === "yt" ? "▶️" : (SCENES.find(s => s.id === j.scene) || {}).icon || "🎬"}</span>
+      <div class="grow"><div class="en">${esc(j.title)}</div><div class="it" style="white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${esc(j.text)}</div></div>
+      <span class="small muted">${j.type === "yt" ? "" : j.score + "%"}</span></div>`).join("")}</div>` : ""}`;
+}
+function bindScenes(v) {
+  $$("[data-s]", v).forEach(b => b.onclick = () => openScene(SCENES.find(s => s.id === b.dataset.s)));
+  $("#ytNew", v).onclick = () => openYouTube();
+  $$("[data-j]", v).forEach(r => r.onclick = () => {
+    const j = S.journal.find(x => x.id === r.dataset.j); if (!j) return;
+    if (j.type === "yt") openYouTube(j); else openScene(SCENES.find(s => s.id === j.scene), j);
+  });
+}
+
+function openScene(s, entry) {
+  if (!s) return;
+  stopDialogue(); stopScene();
+  SC = { s, playing: false, token: 0, cur: -1, subs: 0, slow: false, played: false };
+  showOverlay();
+  overlay.innerHTML = `<div class="lesson"><div class="lesson-top"><button class="x" id="quit" aria-label="Chiudi">✕</button>
+    <div class="grow"><b>${s.icon} ${esc(s.title)}</b><div class="small muted"><span class="badge">${s.level}</span>${esc(s.genre)}</div></div></div>
+    <div class="ex-body ex-in" id="scBody">
+      <p class="muted small" style="margin-top:0">🎬 ${esc(s.setting)}</p>
+      <div class="tv"><div class="tv-screen"><div class="tv-who" id="tvWho">Premi ▶ per iniziare</div><div class="tv-sub" id="tvSub"></div><div class="tv-subit" id="tvSubIt"></div></div>
+        <div class="tv-bar"><div class="tv-prog"><i id="tvProg"></i></div></div></div>
+      <div class="tv-controls">
+        <button class="btn" id="tvRestart" aria-label="Dall'inizio">⏮</button>
+        <button class="btn primary" id="tvPlay" style="flex:1">▶ Guarda la scena</button>
+        <button class="btn" id="tvSlow" aria-label="Lento">🐢</button>
+      </div>
+      <div class="chips" id="subChips">${["Senza sottotitoli", "Sottotitoli EN", "EN + IT"].map((t, i) => `<button class="chip ${i === 0 ? "on" : ""}" data-sub="${i}">${t}</button>`).join("")}</div>
+      <p class="muted small">Consiglio: la prima volta guardala senza sottotitoli. Puoi riascoltarla quante volte vuoi.</p>
+      <label class="field"><span>✍️ Cosa hai capito? Scrivi in italiano (o in inglese)</span>
+        <textarea id="scText" rows="5" placeholder="Es. Il capo arriva in ritardo e…">${esc(entry ? entry.text : "")}</textarea></label>
+      <div id="scResult"></div>
+    </div>
+    <div class="ex-foot"><button class="btn primary block" id="scCheck">Controlla cosa ho capito</button></div></div>`;
+  $("#quit").onclick = closeLesson;
+  $("#tvPlay").onclick = () => { if (SC.playing) return pauseScene(); playScene(SC.cur >= 0 && SC.cur < s.lines.length - 1 ? SC.cur : 0); };
+  $("#tvRestart").onclick = () => { pauseScene(); playScene(0); };
+  $("#tvSlow").onclick = () => { SC.slow = !SC.slow; $("#tvSlow").classList.toggle("primary", SC.slow); toast(SC.slow ? "Velocità ridotta 🐢" : "Velocità normale"); };
+  $$("[data-sub]", overlay).forEach(c => c.onclick = () => { SC.subs = +c.dataset.sub; $$("[data-sub]", overlay).forEach(x => x.classList.toggle("on", x === c)); updateTV(); });
+  $("#scCheck").onclick = () => checkScene(s);
+  if (entry) checkScene(s, true);
+}
+function updateTV() {
+  if (!SC) return;
+  const { s, cur } = SC, line = s.lines[cur];
+  const who = $("#tvWho"), sub = $("#tvSub"), subIt = $("#tvSubIt"), play = $("#tvPlay"), prog = $("#tvProg");
+  if (!who) return;
+  play.textContent = SC.playing ? "⏸ Pausa" : SC.played ? "▶ Riprendi / riguarda" : "▶ Guarda la scena";
+  if (prog) prog.style.width = (cur < 0 ? 0 : ((cur + 1) / s.lines.length) * 100) + "%";
+  if (!line) { who.textContent = SC.played ? "Fine della scena" : "Premi ▶ per iniziare"; sub.textContent = ""; subIt.textContent = ""; return; }
+  who.textContent = "🗣️ " + nameOf(line[0]);
+  sub.textContent = SC.subs >= 1 ? line[1] : "";
+  subIt.textContent = SC.subs === 2 ? line[2] : "";
+  who.parentElement.classList.remove("flash"); void who.offsetWidth; who.parentElement.classList.add("flash");
+}
+function playScene(i) {
+  if (!SC) return;
+  SC.playing = true; SC.token++;
+  const token = SC.token;
+  const step = j => {
+    if (!SC || token !== SC.token || !SC.playing) return;
+    if (j >= SC.s.lines.length) { SC.playing = false; SC.played = true; SC.cur = SC.s.lines.length; updateTV(); return; }
+    SC.cur = j; updateTV();
+    const [who, en] = SC.s.lines[j], voice = SC.s.cast[who] || "f";
+    let moved = false;
+    const next = () => { if (moved) return; moved = true; clearTimeout(fb); setTimeout(() => step(j + 1), 450); };
+    const fb = setTimeout(next, (hasAudio(en, voice) ? 4000 : 1500) + en.split(" ").length * (SC.slow ? 900 : 650));
+    say(en, SC.slow, { voice, pitch: /m$/.test(voice) ? 0.85 : 1.1, onend: next });
+  };
+  step(i);
+}
+function checkScene(s, silent) {
+  const txt = $("#scText").value.trim();
+  if (txt.length < 15) { if (!silent) toast("Scrivi almeno una frase su cosa hai capito"); return; }
+  pauseScene();
+  const f = foldText(txt);
+  const got = s.points.map(p => p.kw.some(k => f.includes(foldText(k))));
+  const render = () => {
+    const n = got.filter(Boolean).length, score = Math.round((n / s.points.length) * 100);
+    $("#scResult").innerHTML = `<div class="card pop-in"><div class="row"><div class="ring" style="--p:${score}"><div>${score}%</div></div>
+      <div class="grow"><b>${score >= 80 ? "Ottima comprensione! 🎉" : score >= 50 ? "Buona comprensione 👍" : "Riascoltala con i sottotitoli 💪"}</b>
+      <div class="small muted">${n} punti chiave su ${s.points.length}. Tocca un punto per correggere la valutazione.</div></div></div>
+      <div style="margin-top:10px">${s.points.map((p, i) => `<button class="point ${got[i] ? "ok" : ""}" data-pt="${i}">${got[i] ? "✅" : "⬜"} ${esc(p.it)}</button>`).join("")}</div></div>
+      <div class="card"><b>📝 Riassunto</b><p style="margin:6px 0 0">${esc(s.summary)}</p></div>
+      <div class="card"><b>🎬 Copione completo</b><p class="muted small" style="margin:4px 0 8px">Tocca una battuta per riascoltarla.</p>
+      ${s.lines.map(([who, en, it], i) => `<div class="script-line" data-l="${i}"><div class="small muted">${esc(nameOf(who))}</div><div class="sent">${tapText(en, true)}</div><div class="it small muted">${esc(it)}</div></div>`).join("")}</div>`;
+    $$("[data-pt]", overlay).forEach(b => b.onclick = () => { got[+b.dataset.pt] = !got[+b.dataset.pt]; render(); saveEntry(); });
+    $$("[data-l]", overlay).forEach(l => l.onclick = () => { pauseScene(); const [who, en] = s.lines[+l.dataset.l]; say(en, false, { voice: s.cast[who] }); });
+    return score;
+  };
+  let entryId = null;
+  const saveEntry = () => {
+    const score = Math.round((got.filter(Boolean).length / s.points.length) * 100);
+    const old = S.journal.find(j => j.id === entryId || (j.scene === s.id && j.text === txt));
+    if (old) Object.assign(old, { score, t: Date.now() }); else { entryId = Date.now().toString(36); S.journal.unshift({ id: entryId, type: "scene", scene: s.id, title: s.title, text: txt, score, t: Date.now() }); }
+    S.journal = S.journal.slice(0, 100); save();
+  };
+  const score = render();
+  if (!silent) {
+    const firstTime = !S.done["s-" + s.id];
+    saveEntry();
+    S.done["s-" + s.id] = (S.done["s-" + s.id] || 0) + 1;
+    addXP(firstTime ? 10 + Math.round(score / 10) : 5); save();
+    beep(score >= 50);
+    setTimeout(() => $("#scResult").scrollIntoView({ behavior: REDUCED ? "auto" : "smooth", block: "start" }), 60);
+  }
+  $("#scCheck").textContent = "Controlla di nuovo";
+}
+
+/* --- Scena da YouTube scelta da te --- */
+function ytId(url) {
+  const m = String(url).match(/(?:youtu\.be\/|youtube\.com\/(?:watch\?(?:.*&)?v=|embed\/|shorts\/|live\/))([\w-]{11})/);
+  if (!m) return null;
+  const t = String(url).match(/[?&#]t=(?:(\d+)h)?(?:(\d+)m)?(\d+)s?/);
+  const start = t ? (+(t[1] || 0)) * 3600 + (+(t[2] || 0)) * 60 + (+(t[3] || 0)) : 0;
+  return { id: m[1], start };
+}
+function openYouTube(entry) {
+  stopDialogue(); stopScene(); stopAudio();
+  showOverlay();
+  overlay.innerHTML = `<div class="lesson"><div class="lesson-top"><button class="x" id="quit" aria-label="Chiudi">✕</button>
+    <div class="grow"><b>▶️ La tua scena da YouTube</b><div class="small muted">Guarda, poi scrivi cosa hai capito</div></div></div>
+    <div class="ex-body ex-in">
+      ${entry ? "" : `<div class="small muted" style="margin-bottom:6px"><b>1.</b> Cerca una scena su YouTube, copia il link (Condividi → Copia link) e torna qui:</div>
+      <div class="chips" style="flex-wrap:wrap">${[["Friends", "friends scene"], ["How I Met Your Mother", "how i met your mother scene"], ["The Office", "the office us scene"], ["Modern Family", "modern family scene"], ["Brooklyn Nine-Nine", "brooklyn nine nine scene"], ["The Big Bang Theory", "big bang theory scene"], ["Suits", "suits scene"], ["Sherlock (UK)", "sherlock bbc scene"]]
+        .map(([n, q]) => `<a class="chip" target="_blank" rel="noopener" href="https://www.youtube.com/results?search_query=${encodeURIComponent(q + " english subtitles")}">🔎 ${n}</a>`).join("")}</div>
+      <div class="small muted" style="margin:6px 0"><b>2.</b> Incolla il link:</div>`}
+      <label class="field"><span>Link del video</span><input id="ytUrl" placeholder="https://youtu.be/…" value="${esc(entry ? entry.url : "")}" autocapitalize="off" autocorrect="off" inputmode="url"></label>
+      <div id="ytBox"></div>
+      <label class="field"><span>Titolo (serie, episodio…)</span><input id="ytTitle" value="${esc(entry ? entry.title : "")}" placeholder="Es. Scena della riunione"></label>
+      <label class="field"><span>✍️ Cosa hai capito?</span><textarea id="ytText" rows="5" placeholder="Scrivi cosa succede nella scena…">${esc(entry ? entry.text : "")}</textarea></label>
+      <label class="field"><span>Parole o frasi nuove (facoltativo)</span><textarea id="ytWords" rows="2" placeholder="Es. to get fired = essere licenziato">${esc(entry ? entry.words || "" : "")}</textarea></label>
+      <p class="muted small">Suggerimento: cerca su YouTube il nome della serie + "scene" e usa i canali ufficiali. Guardala prima senza sottotitoli, poi con i sottotitoli inglesi (icona CC del video) e confronta con quello che hai scritto.</p>
+      ${entry ? `<button class="btn ghost block sm" id="ytDel" style="color:var(--bad)">Elimina dal diario</button>` : ""}
+    </div>
+    <div class="ex-foot"><button class="btn primary block" id="ytSave">Salva nel diario</button></div></div>`;
+  const show = () => {
+    const v = ytId($("#ytUrl").value), box = $("#ytBox");
+    if (!v) { box.innerHTML = $("#ytUrl").value.trim() ? `<p class="small" style="color:var(--bad)">Link YouTube non riconosciuto.</p>` : ""; return; }
+    if (box.dataset.vid === v.id) return;
+    box.dataset.vid = v.id;
+    box.innerHTML = `<div class="yt-frame"><iframe src="https://www.youtube-nocookie.com/embed/${v.id}?playsinline=1&rel=0&cc_lang_pref=en${v.start ? "&start=" + v.start : ""}" title="Video YouTube" allow="encrypted-media; picture-in-picture; fullscreen" allowfullscreen></iframe></div>`;
+  };
+  $("#ytUrl").oninput = show; show();
+  $("#quit").onclick = closeLesson;
+  if ($("#ytDel")) $("#ytDel").onclick = () => { if (confirm("Eliminare questa voce dal diario?")) { S.journal = S.journal.filter(j => j !== entry); save(); closeLesson(); } };
+  $("#ytSave").onclick = () => {
+    const url = $("#ytUrl").value.trim(), text = $("#ytText").value.trim();
+    if (!ytId(url)) return toast("Incolla un link YouTube valido");
+    if (text.length < 10) return toast("Scrivi cosa hai capito della scena");
+    const data = { url, text, title: $("#ytTitle").value.trim() || "Scena da YouTube", words: $("#ytWords").value.trim(), t: Date.now() };
+    if (entry) Object.assign(entry, data);
+    else { S.journal.unshift({ id: Date.now().toString(36), type: "yt", ...data }); addXP(10); }
+    save(); toast("Salvato nel diario ✅"); closeLesson();
+  };
+}
 
 /* ============ Avvio ============ */
 render({ anim: true });

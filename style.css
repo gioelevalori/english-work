@@ -245,3 +245,22 @@ textarea.answer:focus, input.answer:focus { border-color: var(--primary); }
   *, *::before, *::after { animation-duration: .001ms !important; animation-delay: 0s !important; transition-duration: .001ms !important; }
   #view .rv { opacity: 1; transform: none; }
 }
+
+/* ===== Scene TV ===== */
+a.chip { text-decoration: none; color: inherit; }
+.tv { background: #0b0b12; border-radius: 20px; padding: 10px; box-shadow: 0 10px 30px rgba(0,0,0,.25); margin: 4px 0 12px; }
+.tv-screen { min-height: 170px; border-radius: 12px; background: radial-gradient(ellipse at 50% 30%, #2a2a4a, #111122 70%); color: #fff; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; text-align: center; padding: 16px 14px; }
+.tv-screen.flash .tv-who { animation: popIn .35s var(--ease) both; }
+.tv-who { font-weight: 800; font-size: 15px; color: #fcd34d; margin-bottom: auto; padding-top: 6px; }
+.tv-sub { font-size: 18px; font-weight: 600; line-height: 1.35; text-shadow: 0 2px 4px #000; }
+.tv-subit { font-size: 14px; color: #c7c7e0; margin-top: 4px; }
+.tv-bar { padding: 8px 4px 2px; }
+.tv-prog { height: 4px; border-radius: 4px; background: #2c2c40; overflow: hidden; }
+.tv-prog i { display: block; height: 100%; width: 0; background: #ef4444; transition: width .4s var(--ease); }
+.tv-controls { display: flex; gap: 8px; }
+.point { display: block; width: 100%; text-align: left; padding: 8px 10px; border-radius: 10px; margin: 4px 0; background: var(--bg); font-size: 15px; }
+.point.ok { background: var(--ok-soft); }
+.script-line { padding: 8px 0; border-bottom: 1px solid var(--line); cursor: pointer; }
+.script-line:last-child { border-bottom: 0; }
+.yt-frame { position: relative; padding-top: 56.25%; border-radius: 14px; overflow: hidden; background: #000; margin-bottom: 12px; }
+.yt-frame iframe { position: absolute; inset: 0; width: 100%; height: 100%; border: 0; }
